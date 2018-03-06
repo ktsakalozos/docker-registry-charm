@@ -9,12 +9,11 @@ from charmhelpers.core.hookenv import DEBUG
 from charmhelpers.core import host
 from charmhelpers.core import unitdata
 
-from charms import apt, reactive
+from charms import apt
 from charms.docker import Compose
 
-from charms.reactive import hook, when, when_not, set_state
-from charms.reactive import when_any
-from charms.reactive import remove_state
+from charms.reactive import hook, when, when_not, when_any
+from charms.reactive import set_state, is_state, remove_state
 
 from charms.templating.jinja2 import render
 
@@ -27,7 +26,6 @@ import time
 import base64
 
 
-@hook('start')
 def start():
     compose = Compose('files/docker-registry')
     compose.up()
@@ -39,7 +37,7 @@ def start():
 def stop():
     compose = Compose('files/docker-registry')
     compose.down()
-    close_port(config.previous('registry_port'))
+    close_port(config().previous('registry_port'))
     status_set('maintenance', 'Docker registry stopped.')
 
 
@@ -49,6 +47,9 @@ def start_standalone():
     path = resource_get('registry')
     if path:
         check_call(['docker', 'load', '-i', path])
+    else:
+        status_set('blocked', 'Please attach a registry image.')
+        return
 
     render('docker-compose.yml',
            'files/docker-registry/docker-compose.yml',
@@ -135,14 +136,14 @@ def attach():
         return
 
     apt.queue_install(['rsync'])
-    reactive.set_state('docker-registry.storage.docker-registry.attached')
+    set_state('docker-registry.storage.docker-registry.attached')
 
 
 @hook('docker-registry-storage-detaching')
 def detaching():
     unitdata.kv().unset(data_mount_key)
     unitdata.kv().unset(data_path_key)
-    reactive.remove_state('docker-registry.storage.docker-registry.attached')
+    remove_state('docker-registry.storage.docker-registry.attached')
 
 
 @when('docker-registry.storage.docker-registry.attached')
@@ -151,7 +152,7 @@ def detaching():
 @when('apt.installed.rsync')
 @when_not('docker-registry.storage.docker-registry.migrated')
 def migrate():
-    if reactive.is_state('docker-registry.standalone.running'):
+    if is_state('docker-registry.standalone.running'):
         stop()
         host.service_stop('docker')
 
@@ -192,5 +193,5 @@ def migrate():
     host.service_start('docker')
     start()
 
-    reactive.set_state('docker-registry.storage.docker-registry.migrated')
+    set_state('docker-registry.storage.docker-registry.migrated')
     status_set('active', 'Docker registry ready.')
